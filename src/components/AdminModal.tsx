@@ -16,11 +16,15 @@ import {
   RotateCcw,
   UserCheck,
   Calendar,
-  Award
+  Award,
+  Users,
+  UserPlus,
+  Trash2,
+  UploadCloud
 } from 'lucide-react';
 import { adminService } from '../services/adminService';
-import { SubmissionRecord } from '../types';
-import { ROSTER } from '../data/roster';
+import { rosterService } from '../services/rosterService';
+import { SubmissionRecord, Trainee } from '../types';
 import { LESSONS } from '../data/lessons';
 
 interface AdminModalProps {
@@ -40,14 +44,22 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 }) => {
   const [passwordInput, setPasswordInput] = useState('');
   const [loginError, setLoginError] = useState('');
-  const [activeTab, setActiveTab] = useState<'submissions' | 'unlock' | 'settings'>('submissions');
+  const [activeTab, setActiveTab] = useState<'submissions' | 'roster' | 'unlock' | 'settings'>('submissions');
 
   // Submissions state
   const [submissions, setSubmissions] = useState<SubmissionRecord[]>([]);
   const [searchFilter, setSearchFilter] = useState('');
 
+  // Roster state
+  const [rosterList, setRosterList] = useState<Trainee[]>([]);
+  const [rosterSearch, setRosterSearch] = useState('');
+  const [newStudentName, setNewStudentName] = useState('');
+  const [newStudentId, setNewStudentId] = useState('');
+  const [bulkText, setBulkText] = useState('');
+  const [rosterFeedback, setRosterFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   // Unlock state
-  const [selectedTraineeId, setSelectedTraineeId] = useState(ROSTER[0]?.id || '');
+  const [selectedTraineeId, setSelectedTraineeId] = useState('');
   const [selectedLessonIdx, setSelectedLessonIdx] = useState<number>(0);
   const [unlockSuccessMsg, setUnlockSuccessMsg] = useState('');
 
@@ -57,9 +69,18 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [pwdSuccessMsg, setPwdSuccessMsg] = useState('');
   const [pwdErrorMsg, setPwdErrorMsg] = useState('');
 
+  const refreshRoster = () => {
+    const list = rosterService.getRoster();
+    setRosterList(list);
+    if (list.length > 0 && !selectedTraineeId) {
+      setSelectedTraineeId(list[0].id);
+    }
+  };
+
   useEffect(() => {
     if (isOpen && isAdminUnlocked) {
       setSubmissions(adminService.getSubmissions());
+      refreshRoster();
     }
   }, [isOpen, isAdminUnlocked]);
 
@@ -71,15 +92,62 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       setLoginError('');
       onAdminUnlocked();
       setSubmissions(adminService.getSubmissions());
+      refreshRoster();
     } else {
       setLoginError('كلمة المرور غير صحيحة، يرجى المحاولة مرة أخرى');
+    }
+  };
+
+  const handleAddStudent = (e: React.FormEvent) => {
+    e.preventDefault();
+    setRosterFeedback(null);
+    const name = newStudentName.trim();
+    const id = newStudentId.trim();
+
+    if (!name || !id) {
+      setRosterFeedback({ type: 'error', text: 'يرجى إدخال اسم الطالب والرقم الوزاري.' });
+      return;
+    }
+
+    rosterService.addTrainee({ id, name });
+    setNewStudentName('');
+    setNewStudentId('');
+    refreshRoster();
+    setRosterFeedback({ type: 'success', text: `تمت إضافة الطالب (${name}) برقم (${id}) بنجاح.` });
+    setTimeout(() => setRosterFeedback(null), 3500);
+  };
+
+  const handleRemoveStudent = (id: string, name: string) => {
+    if (window.confirm(`هل أنت متأكد من حذف الطالب: ${name} (${id}) من القائمة؟`)) {
+      rosterService.removeTrainee(id);
+      refreshRoster();
+      setRosterFeedback({ type: 'success', text: `تم حذف الطالب (${name}) من القائمة.` });
+      setTimeout(() => setRosterFeedback(null), 3500);
+    }
+  };
+
+  const handleBulkImport = () => {
+    if (!bulkText.trim()) return;
+    const res = rosterService.importBulkNames(bulkText);
+    setBulkText('');
+    refreshRoster();
+    setRosterFeedback({ type: 'success', text: `تم استيراد ${res.count} طالب/ة بنجاح وإضافتهم للقائمة.` });
+    setTimeout(() => setRosterFeedback(null), 4000);
+  };
+
+  const handleResetRoster = () => {
+    if (window.confirm('هل تريد استعادة قائمة الطلاب الافتراضية؟')) {
+      rosterService.resetToDefault();
+      refreshRoster();
+      setRosterFeedback({ type: 'success', text: 'تمت استعادة قائمة الطلاب الافتراضية بنجاح.' });
+      setTimeout(() => setRosterFeedback(null), 3500);
     }
   };
 
   const handleGrantUnlock = () => {
     if (!selectedTraineeId) return;
     adminService.grantRetakePermission(selectedTraineeId, selectedLessonIdx);
-    const trainee = ROSTER.find(t => t.id === selectedTraineeId);
+    const trainee = rosterList.find(t => t.id === selectedTraineeId);
     const lesson = LESSONS[selectedLessonIdx];
     setUnlockSuccessMsg(`تم منح إذن إعادة النشاط بنجاح للمتدرب/ة: ${trainee?.name || selectedTraineeId} في درس: ${lesson?.title || ''}`);
     setTimeout(() => setUnlockSuccessMsg(''), 4000);
@@ -130,6 +198,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     );
   });
 
+  const filteredRoster = rosterList.filter((t) => {
+    const q = rosterSearch.toLowerCase();
+    return t.name.toLowerCase().includes(q) || t.id.includes(q);
+  });
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs">
       <div className="bg-[#FAF7F0] border-2 border-[#1B3A3D]/20 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 text-[#1B3A3D]">
@@ -139,7 +212,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             <ShieldCheck className="w-6 h-6 text-[#C9A96E]" />
             <div>
               <h2 className="font-bold text-lg">لوحة تحكم المسؤول / المشرف</h2>
-              <p className="text-xs text-[#C9A96E]">إدارة المحتوى، نتائج المتدربين، وصلاحيات الإعادة</p>
+              <p className="text-xs text-[#C9A96E]">إدارة المحتوى، قائمة الطلاب، النتائج، وصلاحيات الإعادة</p>
             </div>
           </div>
           <button
@@ -160,7 +233,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               </div>
               <h3 className="font-bold text-lg">تسجيل دخول المسؤول</h3>
               <p className="text-sm text-[#1B3A3D]/70 max-w-sm mx-auto">
-                يرجى إدخال كلمة مرور المسؤول للوصول إلى تحرير العناصر، نتائج المتدربين، وإذن إعادة النشاط.
+                يرجى إدخال كلمة مرور المسؤول للوصول إلى إدارة الأسماء، تحرير العناصر، ونتائج المتدربين.
               </p>
             </div>
 
@@ -202,7 +275,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveTab('submissions')}
-                className={`flex items-center gap-1.5 px-4 py-2.5 font-bold text-xs sm:text-sm rounded-t-xl transition-colors whitespace-nowrap cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3 sm:px-4 py-2.5 font-bold text-xs sm:text-sm rounded-t-xl transition-colors whitespace-nowrap cursor-pointer ${
                   activeTab === 'submissions'
                     ? 'bg-[#FAF7F0] text-[#1B3A3D] border-t-2 border-r border-l border-[#1B3A3D]/20 border-b-transparent'
                     : 'text-[#1B3A3D]/60 hover:text-[#1B3A3D]'
@@ -214,8 +287,21 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
               <button
                 type="button"
+                onClick={() => setActiveTab('roster')}
+                className={`flex items-center gap-1.5 px-3 sm:px-4 py-2.5 font-bold text-xs sm:text-sm rounded-t-xl transition-colors whitespace-nowrap cursor-pointer ${
+                  activeTab === 'roster'
+                    ? 'bg-[#FAF7F0] text-[#1B3A3D] border-t-2 border-r border-l border-[#1B3A3D]/20 border-b-transparent'
+                    : 'text-[#1B3A3D]/60 hover:text-[#1B3A3D]'
+                }`}
+              >
+                <Users className="w-4 h-4 text-[#C99A2E]" />
+                إدارة الأسماء والطلاب ({rosterList.length})
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setActiveTab('unlock')}
-                className={`flex items-center gap-1.5 px-4 py-2.5 font-bold text-xs sm:text-sm rounded-t-xl transition-colors whitespace-nowrap cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3 sm:px-4 py-2.5 font-bold text-xs sm:text-sm rounded-t-xl transition-colors whitespace-nowrap cursor-pointer ${
                   activeTab === 'unlock'
                     ? 'bg-[#FAF7F0] text-[#1B3A3D] border-t-2 border-r border-l border-[#1B3A3D]/20 border-b-transparent'
                     : 'text-[#1B3A3D]/60 hover:text-[#1B3A3D]'
@@ -228,7 +314,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveTab('settings')}
-                className={`flex items-center gap-1.5 px-4 py-2.5 font-bold text-xs sm:text-sm rounded-t-xl transition-colors whitespace-nowrap cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3 sm:px-4 py-2.5 font-bold text-xs sm:text-sm rounded-t-xl transition-colors whitespace-nowrap cursor-pointer ${
                   activeTab === 'settings'
                     ? 'bg-[#FAF7F0] text-[#1B3A3D] border-t-2 border-r border-l border-[#1B3A3D]/20 border-b-transparent'
                     : 'text-[#1B3A3D]/60 hover:text-[#1B3A3D]'
@@ -241,6 +327,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
             {/* Content Area */}
             <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+              {/* SUBMISSIONS TAB */}
               {activeTab === 'submissions' && (
                 <div className="space-y-4">
                   <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
@@ -333,6 +420,160 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 </div>
               )}
 
+              {/* ROSTER MANAGEMENT TAB */}
+              {activeTab === 'roster' && (
+                <div className="space-y-6">
+                  {/* Feedback message */}
+                  {rosterFeedback && (
+                    <div
+                      className={`p-3 rounded-xl border text-xs font-bold flex items-center gap-2 ${
+                        rosterFeedback.type === 'success'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : 'bg-red-50 text-red-800 border-red-200'
+                      }`}
+                    >
+                      {rosterFeedback.type === 'success' ? (
+                        <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+                      )}
+                      <span>{rosterFeedback.text}</span>
+                    </div>
+                  )}
+
+                  {/* Add New Student Form */}
+                  <form onSubmit={handleAddStudent} className="bg-white border border-[#1B3A3D]/15 rounded-xl p-4 space-y-3">
+                    <h4 className="font-bold text-sm text-[#1B3A3D] flex items-center gap-2">
+                      <UserPlus className="w-4 h-4 text-[#C99A2E]" />
+                      إضافة طالب / متدرب جديد للقائمة
+                    </h4>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                      <div className="sm:col-span-6">
+                        <input
+                          type="text"
+                          value={newStudentName}
+                          onChange={(e) => setNewStudentName(e.target.value)}
+                          placeholder="اسم الطالب كاملاً (مثال: سامر يوسف حسن)"
+                          className="w-full px-3 py-2 text-xs sm:text-sm bg-white border border-[#1B3A3D]/20 rounded-xl focus:ring-2 focus:ring-[#1B3A3D]"
+                        />
+                      </div>
+                      <div className="sm:col-span-4">
+                        <input
+                          type="text"
+                          value={newStudentId}
+                          onChange={(e) => setNewStudentId(e.target.value)}
+                          placeholder="الرقم الوزاري (مثال: 1026)"
+                          className="w-full px-3 py-2 text-xs sm:text-sm bg-white border border-[#1B3A3D]/20 rounded-xl focus:ring-2 focus:ring-[#1B3A3D]"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <button
+                          type="submit"
+                          className="w-full py-2 bg-[#1B3A3D] hover:bg-[#264e52] text-white rounded-xl text-xs font-bold transition-colors shadow-xs cursor-pointer"
+                        >
+                          إضافة
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+
+                  {/* Bulk Import */}
+                  <details className="bg-white border border-[#1B3A3D]/15 rounded-xl p-4 text-xs">
+                    <summary className="font-bold text-sm text-[#1B3A3D] cursor-pointer flex items-center justify-between">
+                      <span className="flex items-center gap-2">
+                        <UploadCloud className="w-4 h-4 text-[#1B3A3D]" />
+                        استيراد أسماء متعددة دفعة واحدة (لصق قائمة الصف)
+                      </span>
+                      <span className="text-xs text-[#C99A2E] font-normal">اضغط للتوسيع ▾</span>
+                    </summary>
+                    <div className="mt-3 space-y-2">
+                      <p className="text-[#1B3A3D]/70 text-[11px]">
+                        يمكنك نسخ أسماء الطلاب من ملف إكسل أو وورد ولصقها هنا (اسم في كل سطر). يمكنك كتابة الاسم فقط وسيعين النظام رقماً تلقائياً، أو كتابة: <code>الاسم - الرقم الوزاري</code>.
+                      </p>
+                      <textarea
+                        rows={4}
+                        value={bulkText}
+                        onChange={(e) => setBulkText(e.target.value)}
+                        placeholder={`مثال:\nمحمد أحمد العلي - 1026\nسارة يوسف النجار - 1027\nخالد وليد الشريف`}
+                        className="w-full p-2.5 bg-[#FAF7F0] border border-[#1B3A3D]/20 rounded-xl font-mono text-xs focus:ring-2 focus:ring-[#1B3A3D]"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleBulkImport}
+                        className="px-4 py-2 bg-[#1B3A3D] text-white rounded-lg text-xs font-bold hover:bg-[#264e52] transition-colors cursor-pointer"
+                      >
+                        استيراد الأسماء الآن
+                      </button>
+                    </div>
+                  </details>
+
+                  {/* Current Trainees List */}
+                  <div className="space-y-3">
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-sm text-[#1B3A3D]">قائمة الطلاب المسجلين</h4>
+                        <span className="text-xs bg-[#1B3A3D]/10 text-[#1B3A3D] px-2 py-0.5 rounded-full font-bold">
+                          {rosterList.length}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={rosterSearch}
+                          onChange={(e) => setRosterSearch(e.target.value)}
+                          placeholder="بحث بالاسم أو الرقم..."
+                          className="px-3 py-1.5 text-xs bg-white border border-[#1B3A3D]/20 rounded-lg focus:ring-2 focus:ring-[#1B3A3D]"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleResetRoster}
+                          className="text-xs text-[#1B3A3D]/60 hover:text-red-700 underline cursor-pointer whitespace-nowrap"
+                          title="استعادة الـ 25 اسماً الافتراضية"
+                        >
+                          استعادة الافتراضية
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="max-h-64 overflow-y-auto bg-white border border-[#1B3A3D]/15 rounded-xl divide-y divide-[#1B3A3D]/10">
+                      {filteredRoster.map((trainee) => (
+                        <div key={trainee.id} className="p-2.5 sm:p-3 flex items-center justify-between hover:bg-[#FAF7F0] transition-colors">
+                          <div className="flex items-center gap-2.5">
+                            <span className="w-7 h-7 rounded-lg bg-[#1B3A3D]/10 text-[#1B3A3D] text-xs font-bold flex items-center justify-center">
+                              {trainee.name.charAt(0)}
+                            </span>
+                            <div>
+                              <div className="font-bold text-xs sm:text-sm text-[#1B3A3D]">
+                                {trainee.name}
+                              </div>
+                              <div className="text-[11px] text-[#1B3A3D]/60">
+                                الرقم الوزاري: <span className="font-mono font-bold text-[#C99A2E]">{trainee.id}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveStudent(trainee.id, trainee.name)}
+                            className="p-1.5 text-[#1B3A3D]/40 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                            title="حذف من القائمة"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                      {filteredRoster.length === 0 && (
+                        <div className="p-6 text-center text-xs text-[#1B3A3D]/60">
+                          لا يوجد طلاب يطابقون البحث.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* UNLOCK RETAKE PERMISSION TAB */}
               {activeTab === 'unlock' && (
                 <div className="space-y-5">
                   <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-xs sm:text-sm text-emerald-900 space-y-1">
@@ -355,7 +596,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         onChange={(e) => setSelectedTraineeId(e.target.value)}
                         className="w-full px-3 py-2 text-xs sm:text-sm bg-white border border-[#1B3A3D]/20 rounded-xl focus:ring-2 focus:ring-[#1B3A3D]"
                       >
-                        {ROSTER.map((t) => (
+                        {rosterList.map((t) => (
                           <option key={t.id} value={t.id}>
                             {t.name} ({t.id})
                           </option>
@@ -399,6 +640,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 </div>
               )}
 
+              {/* SETTINGS TAB */}
               {activeTab === 'settings' && (
                 <div className="space-y-6">
                   {/* Change Password */}
@@ -479,7 +721,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             <div className="bg-[#FAF7F0] border-t border-[#1B3A3D]/15 px-5 py-3 flex items-center justify-between text-xs text-[#1B3A3D]/70 shrink-0">
               <span className="flex items-center gap-1.5 font-medium">
                 <UserCheck className="w-4 h-4 text-emerald-700" />
-                وضع المسؤول نشط (يمكنك تحرير أي عنصر في الدروس الآن)
+                وضع المسؤول نشط (تحرير الدروس، تعديل الطلاب، ومراجعة النتائج)
               </span>
               <button
                 type="button"
